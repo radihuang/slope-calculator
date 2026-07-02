@@ -1,0 +1,12 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Node（日後若改用 build 流程時適用）
+node_modules/
+dist/
+*.log

@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>坡度計算機 · Slope Calculator</title>
+  <meta name="description" content="輸入長度與前後高差，即時換算坡度、斜率、角度，並依台灣洩水／車道／無障礙法規與滑雪難度給出提醒。工地、設計、滑雪皆適用。" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M3 27 L29 27 L29 8 Z' fill='none' stroke='%231C6E63' stroke-width='3' stroke-linejoin='round'/></svg>" />
+  <style>
+    html, body { margin: 0; padding: 0; background: #EBEEE9; }
+    #root { min-height: 100vh; }
+    /* 載入時的簡單提示 */
+    #boot { font-family: system-ui, -apple-system, "PingFang TC", "Noto Sans TC", sans-serif;
+      color: #5C635A; text-align: center; padding: 80px 20px; font-size: 14px; }
+  </style>
+
+  <!-- React 18 + Babel（CDN，瀏覽器端即時編譯，無需 build） -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+  <div id="root"><div id="boot">載入中…</div></div>
+
+  <script type="text/babel" data-presets="react">
+const { useState, useMemo } = React;
+// 坡度計算機 — 工地 / 設計 / 滑雪
+// 正算：長度 + 前後高差 → 坡度(%)、斜率(1:n)、‰、角度(°)
+// 反算：目標坡度 + 已知一邊 → 反推所需高差 或 水平長
+// 並依台灣現行法規（洩水、車道、無障礙）與滑雪難度分級給出提醒。
+
+const CSS = `
+  .sc-wrap{
+    --paper:#EBEEE9; --panel:#F8F9F6; --ink:#1E241F; --ink-2:#5C635A;
+    --line:#CDD3C9; --accent:#1C6E63; --accent-soft:#DCEAE5;
+    --ok:#2E7D4F; --warn:#B0781A; --bad:#AF3A2E;
+    --grid:#DCE1D8;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"PingFang TC","Noto Sans TC","Segoe UI",sans-serif;
+    background:var(--paper); color:var(--ink); font-family:var(--sans);
+    min-height:100%; padding:22px; box-sizing:border-box;
+    -webkit-font-smoothing:antialiased;
+  }
+  .sc-shell{max-width:860px;margin:0 auto;}
+  .sc-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+    justify-content:space-between;margin-bottom:4px;}
+  .sc-headL{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;}
+  .sc-title{font-size:23px;font-weight:650;letter-spacing:-.01em;margin:0;}
+  .sc-sub{font-size:12.5px;color:var(--ink-2);letter-spacing:.02em;}
+  .sc-rule{height:1px;background:var(--line);margin:14px 0 20px;}
+  .sc-eyebrow{font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-2);
+    font-weight:600;margin:0 0 10px;}
+
+  .sc-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  @media(max-width:640px){.sc-grid{grid-template-columns:1fr;}}
+
+  .sc-panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 16px 18px;}
+
+  .sc-field{margin-bottom:14px;}
+  .sc-field:last-child{margin-bottom:0;}
+  .sc-label{display:flex;justify-content:space-between;align-items:baseline;
+    font-size:13px;font-weight:600;margin-bottom:6px;}
+  .sc-label small{font-weight:400;color:var(--ink-2);font-family:var(--mono);font-size:11px;}
+  .sc-inputrow{display:flex;align-items:stretch;border:1px solid var(--line);border-radius:9px;
+    overflow:hidden;background:#fff;transition:border-color .15s,box-shadow .15s;}
+  .sc-inputrow:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
+  .sc-pre{display:flex;align-items:center;padding:0 4px 0 12px;font-family:var(--mono);
+    font-size:18px;color:var(--ink-2);}
+  .sc-input{flex:1;min-width:0;border:0;outline:0;background:transparent;
+    font-family:var(--mono);font-size:20px;padding:11px 12px;color:var(--ink);width:100%;}
+  .sc-unit{display:flex;align-items:center;padding:0 12px;font-family:var(--mono);
+    font-size:12px;color:var(--ink-2);background:#F0F2ED;border-left:1px solid var(--line);}
+
+  .sc-seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#fff;}
+  .sc-seg button{border:0;background:transparent;font-family:var(--sans);font-size:12px;
+    padding:7px 11px;color:var(--ink-2);cursor:pointer;transition:background .12s,color .12s;}
+  .sc-seg button+button{border-left:1px solid var(--line);}
+  .sc-seg button[data-on="true"]{background:var(--ink);color:#fff;font-weight:600;}
+  .sc-seg button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px;}
+
+  .sc-presets{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
+  .sc-chip{border:1px solid var(--line);background:#fff;border-radius:20px;padding:5px 11px;
+    font-size:11.5px;font-family:var(--mono);color:var(--ink-2);cursor:pointer;transition:.12s;}
+  .sc-chip:hover{border-color:var(--accent);color:var(--accent);}
+  .sc-chip[data-on="true"]{background:var(--accent);border-color:var(--accent);color:#fff;}
+
+  .sc-scen{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:18px;}
+  .sc-scenLab{font-size:11px;letter-spacing:.1em;color:var(--ink-2);font-weight:600;}
+  .sc-chip-scen{font-family:var(--sans);font-size:12px;padding:6px 12px;}
+  .sc-chip-scen:hover{background:var(--accent);border-color:var(--accent);color:#fff;}
+
+  .sc-eyebrowRow{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;}
+  .sc-copy{border:1px solid var(--line);background:#fff;border-radius:7px;font-family:var(--sans);
+    font-size:11.5px;color:var(--ink-2);padding:5px 11px;cursor:pointer;transition:.12s;}
+  .sc-copy:hover:not(:disabled){border-color:var(--accent);color:var(--accent);}
+  .sc-copy:disabled{opacity:.45;cursor:default;}
+  .sc-copy[data-done="true"]{background:var(--accent);border-color:var(--accent);color:#fff;}
+
+  .sc-readouts{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);
+    border:1px solid var(--line);border-radius:11px;overflow:hidden;margin-top:16px;}
+  .sc-ro{background:var(--panel);padding:13px 12px;text-align:center;}
+  .sc-ro .k{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-2);font-weight:600;}
+  .sc-ro .v{font-family:var(--mono);font-size:26px;font-weight:600;letter-spacing:-.02em;
+    line-height:1.15;margin-top:5px;font-variant-numeric:tabular-nums;}
+  .sc-ro .u{font-family:var(--mono);font-size:12px;color:var(--ink-2);}
+  .sc-ro .sub{font-family:var(--mono);font-size:11px;color:var(--ink-2);margin-top:3px;}
+
+  .sc-result{margin-top:14px;border:1px solid var(--accent);background:var(--accent-soft);
+    border-radius:10px;padding:11px 14px;display:flex;align-items:baseline;
+    justify-content:space-between;gap:10px;flex-wrap:wrap;}
+  .sc-result .lab{font-size:12.5px;color:var(--ink);font-weight:600;}
+  .sc-result .val{font-family:var(--mono);font-size:23px;font-weight:650;color:var(--accent);
+    font-variant-numeric:tabular-nums;}
+
+  .sc-figsel{display:flex;align-items:center;gap:10px;margin-top:14px;}
+  .sc-figselLab{font-size:11px;letter-spacing:.1em;color:var(--ink-2);font-weight:600;}
+  .sc-figrow{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#fff;}
+  .sc-figbtn{border:0;background:transparent;padding:5px 8px;color:var(--ink-2);cursor:pointer;
+    display:flex;align-items:center;justify-content:center;min-width:42px;transition:background .12s;}
+  .sc-figbtn+.sc-figbtn{border-left:1px solid var(--line);}
+  .sc-figbtn[data-on="true"]{background:var(--accent-soft);}
+  .sc-figbtn:focus-visible{outline:2px solid var(--accent);outline-offset:-2px;}
+  .sc-figico{width:38px;height:28px;display:block;}
+  .sc-result .sub2{display:block;font-size:11px;font-weight:400;color:var(--ink-2);margin-top:1px;}
+
+  .sc-figwrap{margin-top:12px;border:1px solid var(--line);border-radius:12px;background:var(--panel);
+    padding:6px 6px 2px;overflow:hidden;}
+  .sc-fig{display:block;width:100%;height:auto;}
+  .sc-fig .grid{stroke:var(--grid);stroke-width:1;}
+  .sc-fig .base,.sc-fig .riseL{stroke:var(--ink);stroke-width:1.4;}
+  .sc-fig .hyp{stroke:var(--accent);stroke-width:2.4;stroke-linecap:round;}
+  .sc-fig .arc{stroke:var(--accent);stroke-width:1.6;fill:none;}
+  .sc-fig text{font-family:var(--mono);fill:var(--ink);}
+  .sc-fig .dim{fill:var(--ink-2);font-size:11px;}
+  .sc-fig .ang{fill:var(--accent);font-size:12px;font-weight:600;}
+
+  .sc-regs{margin-top:26px;}
+  .sc-cards{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+  @media(max-width:640px){.sc-cards{grid-template-columns:1fr;}}
+  .sc-card{border:1px solid var(--line);border-radius:11px;background:var(--panel);padding:13px 14px;
+    display:flex;flex-direction:column;gap:8px;}
+  .sc-card .top{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;}
+  .sc-card .name{font-size:14px;font-weight:650;}
+  .sc-card .src{font-size:10.5px;color:var(--ink-2);margin-top:2px;line-height:1.3;}
+  .sc-card .thr{font-family:var(--mono);font-size:12px;color:var(--ink-2);}
+  .sc-pill{font-size:11.5px;font-weight:650;padding:3px 9px;border-radius:20px;white-space:nowrap;
+    border:1px solid transparent;}
+  .sc-pill[data-s="ok"]{color:var(--ok);background:#E6F1EA;border-color:#CADBD0;}
+  .sc-pill[data-s="warn"]{color:var(--warn);background:#F6EEDD;border-color:#E6D6B4;}
+  .sc-pill[data-s="bad"]{color:var(--bad);background:#F6E4E1;border-color:#E8CAC4;}
+  .sc-pill[data-s="info"]{color:var(--accent);background:var(--accent-soft);border-color:#C4DCD4;}
+  .sc-conv{font-family:var(--mono);font-size:11.5px;color:var(--ink);
+    background:#F0F2ED;border-radius:7px;padding:7px 9px;line-height:1.5;
+    font-variant-numeric:tabular-nums;}
+  .sc-note{font-size:11px;color:var(--ink-2);line-height:1.45;}
+
+  .sc-foot{margin-top:22px;font-size:11px;color:var(--ink-2);line-height:1.55;}
+  .sc-err{color:var(--bad);font-size:12.5px;margin-top:8px;font-weight:600;}
+  @media(prefers-reduced-motion:reduce){.sc-inputrow{transition:none;}}
+`;
+
+const fmt = (x, dp = 2) => {
+  if (!isFinite(x)) return "∞";
+  const r = Number(x.toFixed(dp));
+  return r.toLocaleString("en-US", { maximumFractionDigits: dp });
+};
+
+function Pill({ s, children }) {
+  return <span className="sc-pill" data-s={s}>{children}</span>;
+}
+
+const PRESETS = [
+  { n: 100, tip: "洩水 小洩" },
+  { n: 50, tip: "洩水 大洩" },
+  { n: 12, tip: "無障礙" },
+  { n: 10, tip: "無障礙放寬" },
+  { n: 6, tip: "車道上限" },
+];
+
+// 常用情境：一鍵切到反算並帶入常用坡度、單位與已知邊
+const SCENARIOS = [
+  { id: "bath", label: "浴室洩水", n: 100, known: "run", unit: "cm", knownVal: "200" },
+  { id: "shower", label: "淋浴濕區", n: 50, known: "run", unit: "cm", knownVal: "150" },
+  { id: "roof", label: "屋頂洩水", n: 50, known: "run", unit: "m", knownVal: "10" },
+  { id: "access", label: "無障礙坡道", n: 12, known: "run", unit: "m", knownVal: "3" },
+  { id: "ramp", label: "車道", n: 6, known: "rise", unit: "m", knownVal: "3" },
+];
+
+const FIGURES = [
+  { id: "none", label: "無" },
+  { id: "board", label: "滑單板" },
+  { id: "car", label: "車輛" },
+  { id: "chair", label: "輪椅" },
+];
+
+// 坡面上的小圖示：採用使用者提供的向量圖。
+// 各圖以「著地點(輪底/板底)為原點、向上延伸」正規化，外層再依實際坡度旋轉。
+// 已移除原檔內建的坡面線與固定傾斜，改由計算機的真實坡度驅動傾斜角。
+function renderFigure(type) {
+  const ink = "var(--ink)", acc = "var(--accent)", mut = "var(--ink-2)";
+  const motion = { stroke: mut, strokeWidth: 14, strokeLinecap: "round", opacity: 0.55 };
+  const S = { fill: "none", strokeLinecap: "round", strokeLinejoin: "round" };
+
+  if (type === "car") {
+    // 原檔 512 座標：輪底 y≈374，中心 x≈263。車體=主色，輪胎=墨色。
+    return (
+      <g transform="scale(0.19) translate(-263, -374)">
+        <line x1="434.5" y1="243" x2="506.5" y2="215" {...motion} />
+        <line x1="450.5" y1="285" x2="518.5" y2="265" {...motion} />
+        <line x1="444.5" y1="329" x2="508.5" y2="329" {...motion} />
+        <path fill={acc} fillRule="evenodd" d="M354.8,294.8c19.5,0,35.8,13.2,40.6,31.2H426c0,0,8.7-23.7,10-32c5.4-35.6-20-56-62-58c0,0-38.1-34.3-55.6-41.4c-24-9.9-84.5-14.8-108.4-4.6c-14.6,6.3-49.5,46.9-49.5,46.9c-40,2-58.5,19.1-62.5,53.1c-16,6-20,20-12,36h44.3c4.8-18,21.1-31.2,40.6-31.2c19.5,0,35.8,13.2,40.6,31.2l102.8,0C319,308,335.4,294.8,354.8,294.8z M405,282h18c3.9,0,7,3.1,7,7c0,3.9-3.1,7-7,7l-18,0c-3.9,0-7-3.1-7-7C398,285.1,401.1,282,405,282z M142,293.6h-32c-3.9,0-7-3.1-7-7c0-3.9,3.1-7,7-7l32,0c3.9,0,7,3.1,7,7C149,290.5,145.9,293.6,142,293.6z M178,242c0,0,22.8-24.3,33-28c8.2-3,35-4.2,35-4.2l0,32.2H178z M266,242v-31.7c0,0,36.8-0.5,48,3.7c10,3.7,32,28,32,28L266,242z" />
+        <path fill={ink} fillRule="evenodd" d="M391.3,327.1c-4.3-16.1-19-28-36.4-28c-17.5,0-32.1,11.9-36.4,28c-0.8,3.1-1.3,6.3-1.3,9.7c0,20.8,16.9,37.7,37.7,37.7c20.8,0,37.7-16.9,37.7-37.7C392.5,333.5,392.1,330.2,391.3,327.1z M354.8,354.8c-9.9,0-17.9-8-17.9-17.9c0-3.6,1.1-6.9,2.9-9.7c3.2-5,8.7-8.2,15.1-8.2c6.3,0,11.9,3.3,15.1,8.2c1.8,2.8,2.9,6.1,2.9,9.7C372.8,346.7,364.8,354.8,354.8,354.8z" />
+        <path fill={ink} fillRule="evenodd" d="M170.8,299.9c-17.1,0-31.5,11.6-35.7,27.4c-0.8,3-1.2,6.2-1.2,9.5c0,20.4,16.5,36.9,36.9,36.9c20.4,0,36.9-16.5,36.9-36.9c0-3.3-0.4-6.5-1.2-9.5C202.3,311.5,188,299.9,170.8,299.9z M188.4,336.8c0,9.7-7.9,17.6-17.6,17.6c-9.7,0-17.6-7.9-17.6-17.6c0-3.5,1-6.8,2.8-9.5c3.1-4.9,8.6-8.1,14.8-8.1c6.2,0,11.7,3.2,14.8,8.1C187.4,330,188.4,333.3,188.4,336.8z" />
+      </g>
+    );
+  }
+
+  if (type === "chair") {
+    // 原檔 512 座標：輪底 y=392，中心 x=240。人=主色，輪子/車架=墨色。
+    return (
+      <g transform="scale(0.16) translate(-240, -392)">
+        <line x1="369" y1="250.4" x2="447" y2="216.4" {...motion} />
+        <line x1="387" y1="294.4" x2="457" y2="272.4" {...motion} />
+        <line x1="395" y1="340.4" x2="451" y2="332.4" {...motion} />
+        <circle cx="292" cy="326" r="66" stroke={ink} strokeWidth="24" {...S} />
+        <circle cx="292" cy="326" r="15" fill={ink} />
+        <line x1="293.6" y1="385.8" x2="292" y2="270" stroke={ink} strokeWidth="10" strokeLinecap="round" />
+        <line x1="349.2" y1="293.1" x2="244" y2="354" stroke={ink} strokeWidth="10" strokeLinecap="round" />
+        <line x1="233.7" y1="295" x2="344" y2="354" stroke={ink} strokeWidth="10" strokeLinecap="round" />
+        <circle cx="176" cy="368" r="24" stroke={ink} strokeWidth="16" {...S} />
+        <path d="M330,230l0,72h-74l-30,44h-48" stroke={ink} strokeWidth="26" {...S} />
+        <line x1="330" y1="230" x2="348.7" y2="219.4" stroke={ink} strokeWidth="26" strokeLinecap="round" />
+        <path d="M254,302l-80,66" stroke={ink} strokeWidth="22" {...S} />
+        <circle cx="226" cy="178" r="38" fill={acc} />
+        <path d="M244,214l32,58l-49.8,8.1L184,349.2" stroke={acc} strokeWidth="30" {...S} />
+        <path d="M247,219.4L298.1,222.2L292,274.3" stroke={acc} strokeWidth="22" {...S} />
+      </g>
+    );
+  }
+
+  // board 滑單板 — 原檔 512 座標：板底 y≈376，中心 x=258。人=主色，雪板=墨色。
+  return (
+    <g transform="scale(0.15) translate(-258, -376)">
+      <line x1="362" y1="248" x2="432" y2="218" {...motion} />
+      <line x1="374" y1="296" x2="444" y2="276" {...motion} />
+      <path d="M104,350c81.3,20.7,184.4,31.5,300.7-0.8" stroke={ink} strokeWidth="26" {...S} />
+      <circle cx="268" cy="160" r="42" fill={acc} />
+      <path fill={acc} d="M238,205c0,0,56.3-5.9,70,5c13.5,10.8,16.3,81.7,16.3,81.7s-24.7,11.8-63.9,6.5c-14.5-1.9-50.9-10.1-50.9-10.1L238,205z" />
+      <path d="M237.5,217.1l-47.2,47.4" stroke={acc} strokeWidth="24" {...S} />
+      <path d="M304.5,221.4l44.9,51.7" stroke={acc} strokeWidth="24" {...S} />
+      <path d="M245,290l-37.3,51.2" stroke={acc} strokeWidth="28" {...S} />
+      <path d="M282,292l26.9,46.2" stroke={acc} strokeWidth="28" {...S} />
+      <line x1="178.7" y1="344" x2="211.6" y2="347.3" stroke={acc} strokeWidth="22" strokeLinecap="round" />
+      <line x1="308" y1="344" x2="338" y2="344" stroke={acc} strokeWidth="22" strokeLinecap="round" />
+    </g>
+  );
+}
+
+function SlopeCalculator() {
+  const [mode, setMode] = useState("forward"); // forward | reverse
+  const [unit, setUnit] = useState("m");        // m / cm
+
+  // 正算
+  const [lenStr, setLenStr] = useState("6");
+  const [riseStr, setRiseStr] = useState("0.06");
+  const [lenType, setLenType] = useState("run"); // run 水平長度 / slope 斜距
+
+  // 反算
+  const [targetStr, setTargetStr] = useState("12");
+  const [targetType, setTargetType] = useState("ratio"); // pct / ratio(1:n)
+  const [knownDim, setKnownDim] = useState("run"); // run 已知水平長 / rise 已知高差
+  const [knownStr, setKnownStr] = useState("3");
+  const [copied, setCopied] = useState(false);
+  const [figure, setFigure] = useState("board"); // none / board / car / chair
+
+  const applyScenario = (s) => {
+    setMode("reverse");
+    setTargetType("ratio");
+    setTargetStr(String(s.n));
+    setKnownDim(s.known);
+    setUnit(s.unit);
+    setKnownStr(s.knownVal);
+  };
+
+  const eff = useMemo(() => {
+    if (mode === "forward") {
+      const len = parseFloat(lenStr);
+      const rise = Math.abs(parseFloat(riseStr));
+      if (!(len > 0) || !isFinite(rise)) return null;
+      let run, slope;
+      if (lenType === "run") { run = len; slope = Math.hypot(run, rise); }
+      else { slope = len; if (rise > slope) return { invalid: true }; run = Math.sqrt(Math.max(slope * slope - rise * rise, 0)); }
+      const pct = run > 0 ? (rise / run) * 100 : Infinity;
+      const ratioN = rise > 0 ? run / rise : Infinity;
+      const deg = (Math.atan2(rise, run) * 180) / Math.PI;
+      return { run, rise, slope, pct, ratioN, deg, solved: null };
+    } else {
+      const t = parseFloat(targetStr);
+      const known = Math.abs(parseFloat(knownStr));
+      let pct;
+      if (targetType === "pct") pct = t;
+      else pct = t > 0 ? 100 / t : NaN; // 1:n
+      if (!isFinite(pct) || pct < 0 || !isFinite(known)) return null;
+      const ratio = pct / 100;
+      let run, rise, solvedKey, solvedVal;
+      if (knownDim === "run") { if (!(known > 0)) return null; run = known; rise = run * ratio; solvedKey = "rise"; solvedVal = rise; }
+      else { if (!(known >= 0)) return null; rise = known; run = ratio > 0 ? rise / ratio : Infinity; solvedKey = "run"; solvedVal = run; }
+      const slope = Math.hypot(run, rise);
+      const ratioN = rise > 0 ? run / rise : Infinity;
+      const deg = (Math.atan2(rise, run) * 180) / Math.PI;
+      return { run, rise, slope, pct, ratioN, deg, solved: { key: solvedKey, val: solvedVal } };
+    }
+  }, [mode, lenStr, riseStr, lenType, targetStr, targetType, knownDim, knownStr]);
+
+  const ok = eff && !eff.invalid;
+
+  const fig = useMemo(() => {
+    const W = 360, H = 180, pad = 30;
+    const availW = W - 2 * pad, availH = H - 2 * pad - 6;
+    if (!ok || !isFinite(eff.run)) return null;
+    const ratio = eff.pct / 100;
+    let triW, triH;
+    if (ratio <= availH / availW) { triW = availW; triH = availW * ratio; }
+    else { triH = availH; triW = ratio > 0 ? availH / ratio : availW; }
+    triW = Math.max(triW, 2); triH = Math.max(triH, 0);
+    const ax = pad, ay = H - pad, bx = ax + triW, by = ay, cx = bx, cy = by - triH;
+    const r = 30, th = (eff.deg * Math.PI) / 180;
+    const arc = `M ${ax + r} ${ay} A ${r} ${r} 0 0 0 ${ax + r * Math.cos(th)} ${ay - r * Math.sin(th)}`;
+    return { W, H, ax, ay, bx, by, cx, cy, arc };
+  }, [ok, eff]);
+
+  const u = unit;
+  const convU = (v) => `${isFinite(v) ? fmt(v, u === "cm" ? 1 : 3) : "∞"} ${u}`;
+
+  const handleCopy = () => {
+    if (!ok) return;
+    const ratioTxt = isFinite(eff.ratioN) ? `1:${fmt(eff.ratioN, 1)}` : "水平";
+    const line =
+      `坡度 ${fmt(eff.pct, 2)}%｜${ratioTxt}｜${fmt(eff.pct * 10, 1)}‰｜${fmt(eff.deg, 2)}°` +
+      `｜水平 ${convU(eff.run)}・高差 ${convU(eff.rise)}・斜距 ${convU(eff.slope)}`;
+    const done = () => { setCopied(true); setTimeout(() => setCopied(false), 1500); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(line).then(done).catch(() => fallbackCopy(line, done));
+    } else {
+      fallbackCopy(line, done);
+    }
+  };
+  const fallbackCopy = (text, done) => {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select(); document.execCommand("copy");
+      document.body.removeChild(ta); done();
+    } catch (e) { /* clipboard unavailable */ }
+  };
+
+  const regs = useMemo(() => {
+    if (!ok || !isFinite(eff.run)) return null;
+    const { run, pct, rise } = eff;
+    const riseCm = unit === "cm" ? rise : rise * 100;
+
+    let drain;
+    if (pct >= 2) drain = { s: "ok", label: "達大洩 1/50" };
+    else if (pct >= 1) drain = { s: "warn", label: "僅達小洩 1/100" };
+    else drain = { s: "bad", label: "未達最小洩水" };
+    const drainOver = pct > 4;
+
+    const ramp = pct <= 100 / 6 ? { s: "ok", label: "符合 ≤1:6" } : { s: "bad", label: "超過 1:6" };
+
+    let acc;
+    if (pct <= 100 / 12) acc = { s: "ok", label: "符合 ≤1/12" };
+    else {
+      let allow;
+      if (riseCm <= 3) allow = 50; else if (riseCm <= 5) allow = 20; else if (riseCm <= 20) allow = 10; else allow = 100 / 12;
+      if (allow > 100 / 12 && pct <= allow) acc = { s: "warn", label: "僅符合放寬值" };
+      else acc = { s: "bad", label: "超過規定" };
+    }
+
+    let ski;
+    if (pct <= 25) ski = "綠線・初級";
+    else if (pct <= 40) ski = "藍線・中級";
+    else if (pct <= 60) ski = "黑線・高級";
+    else ski = "雙黑・專家";
+
+    return { drain, drainOver, ramp, acc, ski, run };
+  }, [ok, eff, unit]);
+
+  return (
+    <div className="sc-wrap">
+      <style>{CSS}</style>
+      <div className="sc-shell">
+        <div className="sc-head">
+          <div className="sc-headL">
+            <h1 className="sc-title">坡度計算機</h1>
+            <span className="sc-sub">Slope / Grade · 工地 · 設計 · 滑雪</span>
+          </div>
+          <div className="sc-seg">
+            <button data-on={mode === "forward"} onClick={() => setMode("forward")}>正算</button>
+            <button data-on={mode === "reverse"} onClick={() => setMode("reverse")}>反算</button>
+          </div>
+        </div>
+        <div className="sc-rule" />
+
+        <div className="sc-scen">
+          <span className="sc-scenLab">常用情境</span>
+          {SCENARIOS.map((s) => (
+            <button key={s.id} className="sc-chip sc-chip-scen" onClick={() => applyScenario(s)}>
+              {s.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="sc-grid">
+          {/* 輸入 */}
+          <div className="sc-panel">
+            <p className="sc-eyebrow">{mode === "forward" ? "輸入 · Input" : "反算 · Solve for"}</p>
+
+            {mode === "forward" ? (
+              <>
+                <div className="sc-field">
+                  <div className="sc-label">
+                    <span>長度</span>
+                    <small>{lenType === "run" ? "horizontal run" : "slope length"}</small>
+                  </div>
+                  <div className="sc-inputrow">
+                    <input className="sc-input" type="number" inputMode="decimal"
+                      value={lenStr} onChange={(e) => setLenStr(e.target.value)} placeholder="0" />
+                    <span className="sc-unit">{u}</span>
+                  </div>
+                  <div style={{ marginTop: 8 }}>
+                    <div className="sc-seg">
+                      <button data-on={lenType === "run"} onClick={() => setLenType("run")}>水平長度</button>
+                      <button data-on={lenType === "slope"} onClick={() => setLenType("slope")}>斜距</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="sc-field">
+                  <div className="sc-label"><span>前後高差</span><small>rise / drop</small></div>
+                  <div className="sc-inputrow">
+                    <input className="sc-input" type="number" inputMode="decimal"
+                      value={riseStr} onChange={(e) => setRiseStr(e.target.value)} placeholder="0" />
+                    <span className="sc-unit">{u}</span>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="sc-field">
+                  <div className="sc-label">
+                    <span>目標坡度</span>
+                    <small>{targetType === "ratio" ? "1 : n" : "percent"}</small>
+                  </div>
+                  <div className="sc-inputrow">
+                    {targetType === "ratio" && <span className="sc-pre">1 :</span>}
+                    <input className="sc-input" type="number" inputMode="decimal"
+                      value={targetStr} onChange={(e) => setTargetStr(e.target.value)} placeholder="0" />
+                    <span className="sc-unit">{targetType === "ratio" ? "n" : "%"}</span>
+                  </div>
+                  <div style={{ marginTop: 8 }}>
+                    <div className="sc-seg">
+                      <button data-on={targetType === "ratio"} onClick={() => setTargetType("ratio")}>斜率 1:n</button>
+                      <button data-on={targetType === "pct"} onClick={() => setTargetType("pct")}>百分比 %</button>
+                    </div>
+                  </div>
+                  <div className="sc-presets">
+                    {PRESETS.map((p) => (
+                      <button key={p.n} className="sc-chip"
+                        data-on={targetType === "ratio" && parseFloat(targetStr) === p.n}
+                        onClick={() => { setTargetType("ratio"); setTargetStr(String(p.n)); }}
+                        title={p.tip}>1/{p.n}</button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="sc-field">
+                  <div className="sc-label"><span>已知</span></div>
+                  <div className="sc-seg">
+                    <button data-on={knownDim === "run"} onClick={() => setKnownDim("run")}>水平長度</button>
+                    <button data-on={knownDim === "rise"} onClick={() => setKnownDim("rise")}>高差</button>
+                  </div>
+                  <div className="sc-inputrow" style={{ marginTop: 8 }}>
+                    <input className="sc-input" type="number" inputMode="decimal"
+                      value={knownStr} onChange={(e) => setKnownStr(e.target.value)} placeholder="0" />
+                    <span className="sc-unit">{u}</span>
+                  </div>
+                </div>
+              </>
+            )}
+
+            <div className="sc-field" style={{ marginTop: 14 }}>
+              <div className="sc-label"><span>單位</span></div>
+              <div className="sc-seg">
+                <button data-on={unit === "m"} onClick={() => setUnit("m")}>公尺 m</button>
+                <button data-on={unit === "cm"} onClick={() => setUnit("cm")}>公分 cm</button>
+              </div>
+            </div>
+
+            {eff && eff.invalid && <p className="sc-err">高差不可大於斜距，請確認輸入。</p>}
+          </div>
+
+          {/* 結果 + 圖 */}
+          <div className="sc-panel">
+            <div className="sc-eyebrowRow">
+              <p className="sc-eyebrow" style={{ margin: 0 }}>結果 · Output</p>
+              <button className="sc-copy" data-done={copied} onClick={handleCopy} disabled={!ok}>
+                {copied ? "已複製 ✓" : "複製結果"}
+              </button>
+            </div>
+            <div className="sc-readouts">
+              <div className="sc-ro">
+                <div className="k">坡度</div>
+                <div className="v">{ok ? fmt(eff.pct, 2) : "—"}</div>
+                <div className="u">%</div>
+                <div className="sub">{ok ? `${fmt(eff.pct * 10, 1)} ‰` : ""}</div>
+              </div>
+              <div className="sc-ro">
+                <div className="k">斜率</div>
+                <div className="v" style={{ fontSize: 21 }}>
+                  {ok ? (isFinite(eff.ratioN) ? `1:${fmt(eff.ratioN, 1)}` : "水平") : "—"}
+                </div>
+                <div className="u">rise : run</div>
+                <div className="sub">&nbsp;</div>
+              </div>
+              <div className="sc-ro">
+                <div className="k">角度</div>
+                <div className="v">{ok ? fmt(eff.deg, 2) : "—"}</div>
+                <div className="u">deg °</div>
+                <div className="sub">&nbsp;</div>
+              </div>
+            </div>
+
+            {/* 求得 / 斜距 */}
+            {ok && (
+              <div className="sc-result">
+                {eff.solved ? (
+                  <>
+                    <span className="lab">求得 {eff.solved.key === "rise" ? "前後高差" : "水平長度"}</span>
+                    <span className="val">{convU(eff.solved.val)}
+                      <span className="sub2">斜距 {convU(eff.slope)}</span>
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="lab">斜距 slope length</span>
+                    <span className="val">{convU(eff.slope)}</span>
+                  </>
+                )}
+              </div>
+            )}
+
+            <div className="sc-figsel">
+              <span className="sc-figselLab">圖示</span>
+              <div className="sc-figrow">
+                {FIGURES.map((f) => (
+                  <button key={f.id} className="sc-figbtn" data-on={figure === f.id}
+                    onClick={() => setFigure(f.id)} title={f.label} aria-label={f.label}>
+                    {f.id === "none"
+                      ? <span style={{ fontSize: 12 }}>無</span>
+                      : <svg className="sc-figico" viewBox="-42 -52 96 62" aria-hidden="true">{renderFigure(f.id)}</svg>}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="sc-figwrap">
+              {fig ? (
+                <svg className="sc-fig" viewBox={`0 0 ${fig.W} ${fig.H}`} role="img"
+                  aria-label={`坡度剖面圖 ${fmt(eff.deg, 1)} 度`}>
+                  {[0.25, 0.5, 0.75].map((f) => (
+                    <line key={f} className="grid" x1={fig.ax} x2={fig.W - 20}
+                      y1={fig.ay - (fig.ay - 20) * f} y2={fig.ay - (fig.ay - 20) * f} />
+                  ))}
+                  <line className="base" x1={fig.ax} y1={fig.ay} x2={fig.bx} y2={fig.by} />
+                  <line className="riseL" x1={fig.bx} y1={fig.by} x2={fig.cx} y2={fig.cy} />
+                  <line className="hyp" x1={fig.ax} y1={fig.ay} x2={fig.cx} y2={fig.cy} />
+                  <path className="arc" d={fig.arc} />
+                  <text className="ang" x={fig.ax + 34} y={fig.ay - 8}>{fmt(eff.deg, 1)}°</text>
+                  <text className="dim" x={(fig.ax + fig.bx) / 2} y={fig.ay + 16} textAnchor="middle">
+                    水平 {convU(eff.run)}
+                  </text>
+                  <text className="dim" x={fig.cx + 6} y={(fig.by + fig.cy) / 2} dominantBaseline="middle">
+                    高差 {convU(eff.rise)}
+                  </text>
+                  {figure !== "none" && (
+                    <g transform={`translate(${(fig.ax + fig.cx) / 2},${(fig.ay + fig.cy) / 2}) rotate(${-eff.deg}) scale(0.8)`}>
+                      {renderFigure(figure)}
+                    </g>
+                  )}
+                </svg>
+              ) : (
+                <svg className="sc-fig" viewBox="0 0 360 180" aria-hidden="true">
+                  <line className="grid" x1="30" y1="150" x2="340" y2="150" />
+                  <text x="180" y="90" textAnchor="middle" className="dim">
+                    {mode === "forward" ? "輸入長度與高差" : "輸入目標坡度與已知邊"}
+                  </text>
+                </svg>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* 法規提醒 */}
+        <div className="sc-regs">
+          <p className="sc-eyebrow">法規提醒 · Reference（以水平投影長計）</p>
+          <div className="sc-cards">
+            <div className="sc-card">
+              <div className="top">
+                <div>
+                  <div className="name">洩水坡度</div>
+                  <div className="src">建築技術規則建築設備編 · 常用 1/100～1/50</div>
+                </div>
+                {regs ? <Pill s={regs.drainOver ? "warn" : regs.drain.s}>{regs.drain.label}</Pill> : <Pill s="info">—</Pill>}
+              </div>
+              <div className="thr">下限：小洩 1/100 (1%)　濕區/屋頂 大洩 1/50 (2%)</div>
+              {regs && (
+                <div className="sc-conv">
+                  在此長 {convU(regs.run)}，最小高差：<br />
+                  小洩 1/100 = {convU(regs.run / 100)}　大洩 1/50 = {convU(regs.run / 50)}
+                </div>
+              )}
+              {regs && regs.drainOver && (
+                <div className="sc-note">坡度偏陡，地坪排水過快易留污、施工不易，一般地坪不建議。</div>
+              )}
+            </div>
+
+            <div className="sc-card">
+              <div className="top">
+                <div>
+                  <div className="name">車道坡道</div>
+                  <div className="src">建築技術規則建築設計施工編 §61</div>
+                </div>
+                {regs ? <Pill s={regs.ramp.s}>{regs.ramp.label}</Pill> : <Pill s="info">—</Pill>}
+              </div>
+              <div className="thr">上限：坡度不得超過 1:6 (≈16.67%)</div>
+              {regs && <div className="sc-conv">在此長 {convU(regs.run)}，最大高差 1:6 = {convU(regs.run / 6)}</div>}
+              <div className="sc-note">表面須粗面防滑；內側曲線半徑 ≥5m；起訖處另需緩衝考量。</div>
+            </div>
+
+            <div className="sc-card">
+              <div className="top">
+                <div>
+                  <div className="name">無障礙坡道</div>
+                  <div className="src">建築物無障礙設施設計規範 206</div>
+                </div>
+                {regs ? <Pill s={regs.acc.s}>{regs.acc.label}</Pill> : <Pill s="info">—</Pill>}
+              </div>
+              <div className="thr">上限：坡度不得大於 1/12 (8.33%)</div>
+              {regs && <div className="sc-conv">在此長 {convU(regs.run)}，最大高差 1/12 = {convU(regs.run / 12)}</div>}
+              <div className="sc-note">
+                高差&lt;20cm 得放寬：≤20cm→1/10、≤5cm→1/5、≤3cm→1/2。
+                每高差 75cm 需設中間平台，平台坡度 ≤1/50。
+              </div>
+            </div>
+
+            <div className="sc-card">
+              <div className="top">
+                <div>
+                  <div className="name">滑雪難度（參考）</div>
+                  <div className="src">國際慣例概略分級，各雪場略異</div>
+                </div>
+                {regs ? <Pill s="info">{regs.ski}</Pill> : <Pill s="info">—</Pill>}
+              </div>
+              <div className="thr">綠 ≤25%　藍 25–40%　黑 40–60%　雙黑 &gt;60%</div>
+              {ok && <div className="sc-conv">目前 {fmt(eff.pct, 1)}%　≈ {fmt(eff.deg, 1)}°</div>}
+            </div>
+          </div>
+        </div>
+
+        <p className="sc-foot">
+          坡度 = 高差 ÷ 水平投影長；斜率以 1:n 表示（rise:run）；‰ = 每千分之。
+          正算輸入「斜距」時會自動換算水平長；反算給定目標坡度＋已知一邊即反推另一邊。
+          法規數值為現行常見規定之整理，僅供快速研判，實際設計與查驗請以最新條文與主管機關認定為準。
+        </p>
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<SlopeCalculator />);
+
+  </script>
+</body>
+</html>
